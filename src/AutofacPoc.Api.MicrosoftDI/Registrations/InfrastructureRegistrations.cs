@@ -1,6 +1,8 @@
 using AutofacPoc.Api.MicrosoftDI.Distribution;
 using AutofacPoc.Application.Abstractions;
 using AutofacPoc.Application.Decorators;
+using AutofacPoc.Infrastructure.Deliveries;
+using AutofacPoc.Infrastructure.Distributors;
 using AutofacPoc.Infrastructure.Releases;
 
 namespace AutofacPoc.Api.MicrosoftDI.Registrations;
@@ -25,6 +27,9 @@ public static class InfrastructureRegistrations
         // (The Autofac API logs it with the same interceptor as the distributors.)
         services.AddSingleton<IReleaseRepository, InMemoryReleaseRepository>();
 
+        // One shared delivery history for the whole app.
+        services.AddSingleton<IDeliveryHistory, InMemoryDeliveryHistory>();
+
         // ---- Every distributor, found by scanning (written by hand) ----
         // The built-in container has no assembly scanning, so we do it ourselves with reflection:
         // list every class in the Infrastructure project that implements IDspDistributor.
@@ -47,11 +52,18 @@ public static class InfrastructureRegistrations
             // The built-in container has no decorators or interceptors, so we build the chain with `new`.
             // (The Scrutor package adds services.Decorate<...>() as an alternative.)
             services.AddKeyedScoped<IDspDistributor>(dsp, (sp, key) =>
-                new SecurityDspDistributor(
-                    new LoggingDspDistributor(
-                        (IDspDistributor)sp.GetRequiredService(distributorType),
-                        sp.GetRequiredService<ILogger<LoggingDspDistributor>>()),
-                    sp.GetRequiredService<ICurrentUser>()));
+            {
+                var realDistributor = (DspDistributorBase)sp.GetRequiredService(distributorType);
+
+                // PROPERTY INJECTION BY HAND: the built-in container never sets properties,
+                // so we set DspDistributorBase's shared services ourselves.
+                realDistributor.DeliveryHistory = sp.GetRequiredService<IDeliveryHistory>();
+                realDistributor.DeliveryNotifier = sp.GetService<IDeliveryNotifier>(); // null when notifications are off
+
+                return new SecurityDspDistributor(
+                    new LoggingDspDistributor(realDistributor, sp.GetRequiredService<ILogger<LoggingDspDistributor>>()),
+                    sp.GetRequiredService<ICurrentUser>());
+            });
 
             // Step 3: register AGAIN without a key, or it won't appear in IEnumerable<IDspDistributor>.
             // The lambda forwards to the keyed (already wrapped) one, so both return the same object per request.

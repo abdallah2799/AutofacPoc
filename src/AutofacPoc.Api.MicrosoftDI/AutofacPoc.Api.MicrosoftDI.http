@@ -22,6 +22,9 @@ X-Permissions: distribute
 POST {{baseUrl}}/releases/2/distribute-all
 X-Permissions: distribute
 
+### Delivery history of release 1 (distribute it first). Recorded by DspDistributorBase.
+GET {{baseUrl}}/releases/1/deliveries
+
 ### No permission header -> 403 (blocked by the security check)
 POST {{baseUrl}}/releases/1/distribute/Spotify
 

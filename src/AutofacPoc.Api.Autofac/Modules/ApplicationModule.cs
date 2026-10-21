@@ -29,5 +29,6 @@ public class ApplicationModule : Module
         // these services themselves, not for an interface.
         builder.RegisterType<DistributeReleaseService>().InstancePerLifetimeScope();
         builder.RegisterType<DistributeToAllDspsService>().InstancePerLifetimeScope();
+        builder.RegisterType<GetDeliveriesService>().InstancePerLifetimeScope();
     }
 }

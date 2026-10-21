@@ -10,14 +10,15 @@ namespace AutofacPoc.Infrastructure.Distributors;
 /// </summary>
 /// <remarks>
 /// One of several <see cref="IDspDistributor"/> implementations, one per DSP.
+/// It only does the DSP-specific delivery; recording and notifying are shared in <see cref="DspDistributorBase"/>.
 /// The container finds it by scanning this project, and registers it under the key
 /// given in <see cref="DistributesToAttribute"/>. No registration code mentions this class.
 /// </remarks>
 [DistributesTo(Dsp.AppleMusic)]
-public class AppleMusicDistributor : IDspDistributor
+public class AppleMusicDistributor : DspDistributorBase
 {
     /// <inheritdoc />
-    public DistributionResult Distribute(Release release)
+    protected override DistributionResult DeliverToDsp(Release release)
     {
         return new DistributionResult("Apple Music", release.Title, "Delivered to Apple Music");
     }

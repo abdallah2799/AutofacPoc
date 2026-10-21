@@ -3,6 +3,7 @@ using Autofac.Extras.DynamicProxy;
 using AutofacPoc.Api.Autofac.Distribution;
 using AutofacPoc.Api.Autofac.Interceptors;
 using AutofacPoc.Application.Abstractions;
+using AutofacPoc.Infrastructure.Deliveries;
 using AutofacPoc.Infrastructure.Releases;
 
 namespace AutofacPoc.Api.Autofac.Modules;
@@ -30,10 +31,14 @@ public class InfrastructureModule : Module
                .EnableInterfaceInterceptors()
                .InterceptedBy(typeof(LoggingInterceptor));
 
+        // One shared delivery history for the whole app.
+        builder.RegisterType<InMemoryDeliveryHistory>().As<IDeliveryHistory>().SingleInstance();
+
         // ---- Every distributor, found by ASSEMBLY SCANNING ----
         // Instead of one registration per DSP, Autofac looks through the Infrastructure project
         // (an "assembly" = one compiled project/.dll) and registers every class that implements
         // IDspDistributor. A new DSP class is picked up automatically.
+        // (Abstract classes such as DspDistributorBase are skipped: they can't be created.)
         var infrastructureAssembly = typeof(InMemoryReleaseRepository).Assembly; // any class from that project
 
         builder.RegisterAssemblyTypes(infrastructureAssembly)
@@ -41,6 +46,9 @@ public class InfrastructureModule : Module
                .As<IDspDistributor>()                  // included in IEnumerable<IDspDistributor>
                .Keyed<IDspDistributor>(type => GetDsp(type)) // key read from [DistributesTo(...)]
                .InstancePerLifetimeScope()
+               .PropertiesAutowired()                        // PROPERTY INJECTION: after creating it, set every public
+                                                             // settable property Autofac can resolve (DspDistributorBase's
+                                                             // DeliveryHistory, and DeliveryNotifier if it is registered)
                .EnableInterfaceInterceptors()                // wrap each one in a runtime proxy...
                .InterceptedBy(typeof(LoggingInterceptor),    // ...that logs first,
                               typeof(SecurityInterceptor));  // ...then checks [RequiresPermission]

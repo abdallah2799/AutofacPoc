@@ -19,7 +19,7 @@ one interface with many implementations chosen at runtime, plus logging and secu
 src/
 ├── AutofacPoc.Domain           Business objects (Release). References nothing.
 ├── AutofacPoc.Application      Use cases + interfaces they need (IDspDistributor...) + decorators. → Domain
-├── AutofacPoc.Infrastructure   Implementations of those interfaces (SpotifyDistributor...). → Application
+├── AutofacPoc.Infrastructure   Implementations: DspDistributorBase + one distributor per DSP, history, notifier. → Application
 ├── AutofacPoc.Api.MicrosoftDI  Web API using the BUILT-IN container      → http://localhost:5001
 │   ├── Registrations/          AddApplication(), AddInfrastructure() extension methods
 │   ├── Distribution/           Picks a DSP's distributor by key (built-in keyed services)
@@ -34,6 +34,30 @@ src/
 Domain, Application and Infrastructure are **shared** and never mention a DI container.
 Only the two API projects differ: their **composition root** (`Program.cs` plus the `Registrations/` or `Modules/`
 folder) is the one place that decides which class implements which interface.
+
+## Summary: is Autofac worth it?
+
+What each phase showed, for an ASP.NET Core app like ours:
+
+| Feature | Built-in DI | Autofac | Verdict |
+|---|---|---|---|
+| Basic registration and lifetimes (Phase 1) | ✅ | ✅ (slightly longer syntax) | Equal |
+| Grouping registrations per layer (Phase 2) | Extension methods | Modules | Equal for simple use |
+| One interface, many implementations picked at runtime (Phase 3) | Keyed services, but two registrations each + `IServiceProvider` | `.Keyed<>()` + `IIndex` | Autofac cleaner |
+| Assembly scanning (Phase 4) | Hand-written reflection, or Scrutor | Built in | Autofac |
+| Decorators (Phase 5) | Hand-built factories, or Scrutor | `RegisterDecorator` | Autofac |
+| Interceptors: logging/security on many services (Phase 6) | ❌ One decorator per interface | Built in (DynamicProxy) | **Autofac, clearly** |
+| Property injection for base classes and optional services (Phase 7) | ❌ Set by hand, or constructors through every subclass | `.PropertiesAutowired()` | Autofac, use deliberately |
+
+**In short:** for a small app, the built-in container is enough. Autofac pays off when you need many implementations
+chosen at runtime (like one distributor per DSP), conventions instead of long registration lists, cross-cutting
+wrappers such as logging and security on many services, and base classes that share services across many subclasses.
+Those are the needs this POC was built around. You can also adopt it gradually: Autofac still reads everything
+registered in `builder.Services` (Phase 1).
+
+**Costs to keep in mind:** an extra dependency, more "magic" (scanning, interceptors and property injection are less
+visible when reading a class), and a few rules to learn (interface-only interception, async interception, public
+settable properties, `AddControllersAsServices` for controllers).
 
 ## How to run it
 
@@ -61,6 +85,7 @@ dotnet run --project src/AutofacPoc.Api.Autofac       # opens http://localhost:5
 |---|---|
 | `POST /releases/{releaseId}/distribute/{dsp}` | Sends the release to one DSP: `Spotify`, `Anghami`, `AppleMusic` or `YouTubeMusic`. |
 | `POST /releases/{releaseId}/distribute-all` | Sends the release to every DSP and returns one result each. |
+| `GET /releases/{releaseId}/deliveries` | Lists where the release has been delivered (recorded on every successful delivery). |
 
 Releases `1` and `2` exist; `99` returns 404. An unknown DSP (e.g. `TikTok`) returns 400.
 
@@ -89,7 +114,7 @@ The code is documented with `///` comments; they also show up as tooltips in you
 | 4 | **Assembly scanning**: a new DSP = one new class, no registration edits | ✅ Done |
 | 5 | **Decorators**: a logging wrapper around `IDspDistributor` | ✅ Done |
 | 6 | **Interceptors (AOP)**: one logging and one security interceptor for many services | ✅ Done |
-| 7 | **Property injection**: a `BaseController` that gets its logger automatically | ⏳ Next |
+| 7 | **Property injection**: shared and optional services for every DSP distributor's base class | ✅ Done |
 
 ### Phase 0: Setup
 
@@ -502,3 +527,112 @@ because that would need yet another decorator class.
 - For **async** methods (`Task`-returning), the simple `Proceed()`-then-log pattern logs "finished" before the task
   completes. Our methods are synchronous; async interception needs extra handling (e.g. the `Castle.Core.AsyncInterceptor`
   package).
+
+### Phase 7: Property injection
+
+**The business case:** every DSP distributor does the same steps around its delivery: **record** it in the delivery
+history and **notify** the label. That shared work belongs in one base class, `DspDistributorBase`, and each DSP class
+only implements its own delivery:
+
+```csharp
+public abstract class DspDistributorBase : IDspDistributor
+{
+    public IDeliveryHistory DeliveryHistory { get; set; } = null!;   // set by the container
+    public IDeliveryNotifier? DeliveryNotifier { get; set; }          // optional: may stay null
+
+    public DistributionResult Distribute(Release release)
+    {
+        var result = DeliverToDsp(release);                           // DSP-specific part
+        DeliveryHistory.Record(new DeliveryRecord(...));              // shared, written once
+        DeliveryNotifier?.NotifyDelivered(release, result);           // shared, skipped if null
+        return result;
+    }
+
+    protected abstract DistributionResult DeliverToDsp(Release release);
+}
+
+[DistributesTo(Dsp.Spotify)]
+public class SpotifyDistributor : DspDistributorBase                  // no constructor at all
+{
+    protected override DistributionResult DeliverToDsp(Release release) => ...;
+}
+```
+
+**Why property injection fits here (two real reasons):**
+
+1. **Shared services in a base class with many subclasses.** With constructor injection, *every* DSP class would need
+   to accept the base class's services and pass them on:
+
+   ```csharp
+   public SpotifyDistributor(IDeliveryHistory history, IDeliveryNotifier? notifier)
+       : base(history, notifier) { }
+   ```
+
+   That's 4 DSP classes today, and more with every new DSP. Worse, adding **one more** shared service to the base class
+   (say, an `IDeliveryMetrics`) means editing **every** DSP class again. With properties, the base class gets a new
+   property and **no DSP class changes**.
+
+2. **Optional services.** The label notifier is switched on or off in `appsettings.json`:
+
+   ```json
+   "Notifications": { "Enabled": true }
+   ```
+
+   When it is off, the notifier is simply **not registered**. Autofac only sets properties it can resolve, so
+   `DeliveryNotifier` stays `null` and `?.` skips the step. No fake "do-nothing" notifier class is needed.
+
+**Autofac: one line** on the distributor scan (`InfrastructureModule.cs`):
+
+```csharp
+builder.RegisterAssemblyTypes(infrastructureAssembly) ...
+       .PropertiesAutowired()   // after creating each distributor, set every public settable property Autofac can resolve
+```
+
+and the optional registration (`Program.cs`):
+
+```csharp
+if (builder.Configuration.GetValue<bool>("Notifications:Enabled"))
+    container.RegisterType<LogDeliveryNotifier>().As<IDeliveryNotifier>().SingleInstance();
+```
+
+**Built-in DI: by hand** (`InfrastructureRegistrations.cs`). There's no property injection, so the registration code
+sets the properties itself after creating each distributor:
+
+```csharp
+var realDistributor = (DspDistributorBase)sp.GetRequiredService(distributorType);
+realDistributor.DeliveryHistory = sp.GetRequiredService<IDeliveryHistory>();
+realDistributor.DeliveryNotifier = sp.GetService<IDeliveryNotifier>();   // null when notifications are off
+```
+
+That works here only because our scanning loop is one central place. Every new shared property must be added to this
+code too, and anything created outside it would silently get no properties.
+
+**See it work:**
+
+1. `POST /releases/1/distribute/Anghami` (with `X-Permissions: distribute`), then `GET /releases/1/deliveries`:
+   ```json
+   [{ "releaseId": 1, "releaseTitle": "Lost in Cairo", "dsp": "Anghami", "deliveredAtUtc": "..." }]
+   ```
+   A denied delivery (403) is not recorded: the security check stops it before the base class runs.
+2. With notifications on, the console shows the pretend email:
+   ```
+   [Notifier] Email to label of Nour: 'Lost in Cairo' is now live on Anghami
+   ```
+   Set `"Enabled": false` in `appsettings.json`, restart, and the line disappears with no errors.
+
+**Comparison:**
+
+| | Built-in DI | Autofac |
+|---|---|---|
+| Base class gets shared services without changing subclasses | ❌ Constructors through every subclass, or set properties by hand | ✅ `.PropertiesAutowired()` |
+| Optional service that may not be registered | Constructor parameter with a default, or a do-nothing class | ✅ Property stays `null` |
+| New shared service later | Edit every subclass (constructors) or the hand-written setter code | Add a property to the base class |
+
+**Rules and risks:**
+- The property must be **public with a setter**, or Autofac ignores it.
+- A required property that never gets set fails only when it's **used** (a null error at runtime), not when the object is
+  created. That's why **constructor injection stays the default**: use properties for base classes shared by many
+  subclasses and for truly optional services.
+- **Controllers:** ASP.NET Core doesn't create controllers through the container by default, so property injection
+  doesn't reach them unless you add `AddControllers().AddControllersAsServices()` plus `.PropertiesAutowired()` on the
+  controller registrations.

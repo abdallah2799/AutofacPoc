@@ -9,7 +9,7 @@ namespace AutofacPoc.Api.MicrosoftDI.Controllers;
 /// </summary>
 /// <remarks>
 /// The controller is created by the DI container for every HTTP request.
-/// It asks for the two use cases in its constructor and the container builds them
+/// It asks for the use cases in its constructor and the container builds them
 /// (and everything they need) automatically.
 /// </remarks>
 [ApiController]
@@ -19,16 +19,20 @@ public class ReleasesController : ControllerBase
 {
     private readonly DistributeReleaseService _distributeReleaseService;
     private readonly DistributeToAllDspsService _distributeToAllDspsService;
+    private readonly GetDeliveriesService _getDeliveriesService;
 
-    /// <summary>Called by the DI container, which supplies both use cases.</summary>
+    /// <summary>Called by the DI container, which supplies the use cases.</summary>
     /// <param name="distributeReleaseService">Sends a release to one DSP.</param>
     /// <param name="distributeToAllDspsService">Sends a release to every DSP.</param>
+    /// <param name="getDeliveriesService">Reads the delivery history.</param>
     public ReleasesController(
         DistributeReleaseService distributeReleaseService,
-        DistributeToAllDspsService distributeToAllDspsService)
+        DistributeToAllDspsService distributeToAllDspsService,
+        GetDeliveriesService getDeliveriesService)
     {
         _distributeReleaseService = distributeReleaseService;
         _distributeToAllDspsService = distributeToAllDspsService;
+        _getDeliveriesService = getDeliveriesService;
     }
 
     /// <summary>Distribute a release to one DSP, chosen in the URL.</summary>
@@ -82,5 +86,21 @@ public class ReleasesController : ControllerBase
             return NotFound($"Release {releaseId} not found");
 
         return Ok(results);
+    }
+
+    /// <summary>See where a release has been delivered.</summary>
+    /// <remarks>
+    /// Every successful delivery is recorded by the distributors' shared base class
+    /// (<c>DspDistributorBase</c>), using a delivery history it receives through **property injection**.
+    ///
+    /// Distribute a release first, then call this to see the record. No permission needed to read.
+    /// </remarks>
+    /// <param name="releaseId">Unique number of the release, e.g. 1.</param>
+    /// <response code="200">Every recorded delivery of this release, oldest first (empty if none yet).</response>
+    [HttpGet("{releaseId}/deliveries")]
+    [ProducesResponseType(typeof(List<DeliveryRecord>), StatusCodes.Status200OK)]
+    public IActionResult GetDeliveries(int releaseId)
+    {
+        return Ok(_getDeliveriesService.GetDeliveries(releaseId));
     }
 }

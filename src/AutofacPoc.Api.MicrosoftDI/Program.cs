@@ -7,6 +7,7 @@ using AutofacPoc.Api.MicrosoftDI.Registrations;
 using AutofacPoc.Api.MicrosoftDI.Security;
 using AutofacPoc.Application.Abstractions;
 using AutofacPoc.Application.Security;
+using AutofacPoc.Infrastructure.Notifications;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 using System.Text.Json.Serialization;
@@ -67,6 +68,12 @@ builder.Services.AddScoped<ICurrentUser, HeaderCurrentUser>();
 // Each method (see the Registrations folder) holds that layer's registrations.
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure();
+
+// OPTIONAL service: only registered when switched on in appsettings.json.
+if (builder.Configuration.GetValue<bool>("Notifications:Enabled"))
+{
+    builder.Services.AddSingleton<IDeliveryNotifier, LogDeliveryNotifier>();
+}
 
 var app = builder.Build();
 

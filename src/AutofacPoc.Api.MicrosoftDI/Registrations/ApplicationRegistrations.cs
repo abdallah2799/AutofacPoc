@@ -20,6 +20,7 @@ public static class ApplicationRegistrations
     {
         services.AddScoped<DistributeReleaseService>();
         services.AddScoped<DistributeToAllDspsService>();
+        services.AddScoped<GetDeliveriesService>();
         return services;
     }
 }

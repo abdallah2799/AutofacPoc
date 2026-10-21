@@ -8,6 +8,7 @@ using Autofac.Extensions.DependencyInjection;
 using AutofacPoc.Api.Autofac.Security;
 using AutofacPoc.Application.Abstractions;
 using AutofacPoc.Application.Security;
+using AutofacPoc.Infrastructure.Notifications;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 using System.Text.Json.Serialization;
@@ -78,6 +79,13 @@ builder.Host.UseServiceProviderFactory(new AutofacServiceProviderFactory());
 builder.Host.ConfigureContainer<ContainerBuilder>(container =>
 {
     container.RegisterAssemblyModules(typeof(Program).Assembly);
+
+    // OPTIONAL service: only registered when switched on in appsettings.json.
+    // When it isn't registered, PropertiesAutowired simply leaves DspDistributorBase.DeliveryNotifier null.
+    if (builder.Configuration.GetValue<bool>("Notifications:Enabled"))
+    {
+        container.RegisterType<LogDeliveryNotifier>().As<IDeliveryNotifier>().SingleInstance();
+    }
 });
 
 var app = builder.Build();
