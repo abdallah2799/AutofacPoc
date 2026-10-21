@@ -3,10 +3,7 @@
 // knows which concrete class implements each interface.
 // This project is the baseline: what you get WITHOUT Autofac.
 // =====================================================================
-using AutofacPoc.Application.Abstractions;
-using AutofacPoc.Application.Distribution;
-using AutofacPoc.Infrastructure.Distributors;
-using AutofacPoc.Infrastructure.Releases;
+using AutofacPoc.Api.MicrosoftDI.Registrations;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 
@@ -37,12 +34,10 @@ builder.Services.AddOpenApi(options =>
     });
 });
 
-// ---- Dependency registrations (built-in Microsoft DI) ----
-// Read each line as: "when someone asks for X, give them Y".
-// Singleton = one object for the whole app. Scoped = one object per HTTP request.
-builder.Services.AddSingleton<IReleaseRepository, InMemoryReleaseRepository>();
-builder.Services.AddScoped<IDspDistributor, SpotifyDistributor>();
-builder.Services.AddScoped<DistributeReleaseService>();
+// ---- Dependency registrations (built-in Microsoft DI), one extension method per layer ----
+// Each method (see the Registrations folder) holds that layer's registrations.
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure();
 
 var app = builder.Build();
 

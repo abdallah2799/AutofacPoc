@@ -5,10 +5,7 @@
 // =====================================================================
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
-using AutofacPoc.Application.Abstractions;
-using AutofacPoc.Application.Distribution;
-using AutofacPoc.Infrastructure.Distributors;
-using AutofacPoc.Infrastructure.Releases;
+using AutofacPoc.Api.Autofac.Modules;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 
@@ -44,22 +41,14 @@ builder.Services.AddOpenApi(options =>
 // our services, and also ASP.NET Core's own services.
 builder.Host.UseServiceProviderFactory(new AutofacServiceProviderFactory());
 
-// ---- Step 2: register our services with Autofac's ContainerBuilder ----
-// Read each line as: "when someone asks for X (.As<X>), create Y (RegisterType<Y>)".
+// ---- Step 2: register our services, one Autofac MODULE per layer ----
+// Each module (see the Modules folder) holds that layer's registrations.
 // Everything added to builder.Services above (AddControllers, AddOpenApi...) still works:
 // Autofac imports those registrations automatically.
 builder.Host.ConfigureContainer<ContainerBuilder>(container =>
 {
-    // SingleInstance = one object for the whole app (built-in DI: AddSingleton).
-    container.RegisterType<InMemoryReleaseRepository>().As<IReleaseRepository>().SingleInstance();
-
-    // InstancePerLifetimeScope = one object per HTTP request (built-in DI: AddScoped).
-    // ASP.NET Core starts a new Autofac "lifetime scope" for every request.
-    container.RegisterType<SpotifyDistributor>().As<IDspDistributor>().InstancePerLifetimeScope();
-
-    // No .As<...>(): registered as its own class, because the controller asks for
-    // DistributeReleaseService itself, not for an interface.
-    container.RegisterType<DistributeReleaseService>().InstancePerLifetimeScope();
+    container.RegisterModule<ApplicationModule>();
+    container.RegisterModule<InfrastructureModule>();
 });
 
 var app = builder.Build();

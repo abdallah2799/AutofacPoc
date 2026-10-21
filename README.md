@@ -21,12 +21,14 @@ src/
 ├── AutofacPoc.Application      Use cases + interfaces they need (IDspDistributor...). → Domain
 ├── AutofacPoc.Infrastructure   Implementations of those interfaces (SpotifyDistributor...). → Application
 ├── AutofacPoc.Api.MicrosoftDI  Web API using the BUILT-IN container      → http://localhost:5001
+│   └── Registrations/          AddApplication(), AddInfrastructure() extension methods
 └── AutofacPoc.Api.Autofac      The SAME Web API using AUTOFAC            → http://localhost:5002
+    └── Modules/                ApplicationModule, InfrastructureModule
 ```
 
 Domain, Application and Infrastructure are **shared** and never mention a DI container.
-Only the two API projects differ, mostly in `Program.cs`, which is the **composition root**
-(the one place that decides which class implements which interface).
+Only the two API projects differ: their **composition root** (`Program.cs` plus the `Registrations/` or `Modules/`
+folder) is the one place that decides which class implements which interface.
 
 ## How to run it
 
@@ -60,7 +62,7 @@ Each phase is **one commit** on `main`. To study a phase:
 
 1. Read its section below.
 2. Open the commit on GitHub (or run `git show <commit>`) to see exactly what changed.
-3. Compare `src/AutofacPoc.Api.MicrosoftDI/Program.cs` with `src/AutofacPoc.Api.Autofac/Program.cs`.
+3. Compare the two composition roots: `Program.cs` + `Registrations/` (built-in) with `Program.cs` + `Modules/` (Autofac).
 4. Run both APIs and call the same endpoint on each.
 
 The code is documented with `///` comments; they also show up as tooltips in your IDE and as descriptions in Scalar.
@@ -71,8 +73,8 @@ The code is documented with `///` comments; they also show up as tooltips in you
 |---|---|---|
 | 0 | Setup: Clean Architecture layers, two APIs, Scalar docs | ✅ Done |
 | 1 | Plug Autofac into ASP.NET Core, basic registration | ✅ Done |
-| 2 | **Modules**: each layer registers its own services | ⏳ Next |
-| 3 | **Keyed services + `IEnumerable`**: pick the DSP at runtime, distribute to all | |
+| 2 | **Modules**: each layer registers its own services | ✅ Done |
+| 3 | **Keyed services + `IEnumerable`**: pick the DSP at runtime, distribute to all | ⏳ Next |
 | 4 | **Assembly scanning**: a new DSP = one new class, no registration edits | |
 | 5 | **Decorators**: a logging wrapper around `IDspDistributor` | |
 | 6 | **Interceptors (AOP)**: one logging and one security interceptor for many services | |
@@ -125,3 +127,54 @@ builder.Host.ConfigureContainer<ContainerBuilder>(container =>
   `DI container in use: AutofacServiceProvider` (Autofac).
 - At this point Autofac does the same job as the built-in container with slightly longer syntax.
   Its real advantages start in Phase 2.
+
+### Phase 2: Modules
+
+**Problem:** with every registration in `Program.cs`, the file grows with each new service, and one file has to know
+every class from every layer.
+
+**Autofac's answer: a module per layer.** A module is a class that inherits `Autofac.Module` and puts its
+registrations in `Load`:
+
+```csharp
+public class InfrastructureModule : Module
+{
+    protected override void Load(ContainerBuilder builder)
+    {
+        builder.RegisterType<InMemoryReleaseRepository>().As<IReleaseRepository>().SingleInstance();
+        builder.RegisterType<SpotifyDistributor>().As<IDspDistributor>().InstancePerLifetimeScope();
+    }
+}
+```
+
+`Program.cs` then registers whole layers:
+
+```csharp
+builder.Host.ConfigureContainer<ContainerBuilder>(container =>
+{
+    container.RegisterModule<ApplicationModule>();
+    container.RegisterModule<InfrastructureModule>();
+});
+```
+
+**The built-in DI equivalent** is an extension method per layer (`Api.MicrosoftDI/Registrations/`):
+
+```csharp
+builder.Services.AddApplication();
+builder.Services.AddInfrastructure();
+```
+
+**Honest comparison:** for simple grouping like this, modules and extension methods do the same job.
+Modules become better when you need more:
+
+| | Extension methods (built-in) | Autofac modules |
+|---|---|---|
+| Group registrations per layer | ✅ | ✅ |
+| Settings passed in as properties, e.g. `new InfrastructureModule { UseFakeDsps = true }` | Only as method parameters | ✅ Module is a normal class |
+| Find and register **all** modules in a project automatically (`RegisterAssemblyModules`) | ❌ Call each method yourself | ✅ (shown in Phase 4) |
+| React to every registration, e.g. attach logging to all services | ❌ | ✅ (advanced, via `AttachToComponentRegistration`) |
+
+**Where should modules live?** Here they are in the API project, so Domain, Application and Infrastructure stay free
+of any DI container (they don't reference Autofac at all). Many teams instead put each module **inside its layer**
+(e.g. `InfrastructureModule` in the Infrastructure project). That keeps registrations next to the classes,
+but every layer then depends on the Autofac package. Both are valid; pick one and stay consistent.
