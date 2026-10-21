@@ -1,6 +1,7 @@
 using Autofac;
 using AutofacPoc.Api.Autofac.Distribution;
 using AutofacPoc.Application.Abstractions;
+using AutofacPoc.Application.Decorators;
 using AutofacPoc.Infrastructure.Releases;
 
 namespace AutofacPoc.Api.Autofac.Modules;
@@ -32,6 +33,12 @@ public class InfrastructureModule : Module
                .As<IDspDistributor>()                  // included in IEnumerable<IDspDistributor>
                .Keyed<IDspDistributor>(type => GetDsp(type)) // key read from [DistributesTo(...)]
                .InstancePerLifetimeScope();
+
+        // ---- DECORATOR: wrap every distributor with logging ----
+        // Whenever anyone gets an IDspDistributor (by key or in the "all" list), Autofac builds the
+        // real one (e.g. SpotifyDistributor), then passes it as "inner" to a new LoggingDspDistributor,
+        // and returns the wrapper. The distributor classes themselves don't change.
+        builder.RegisterDecorator<LoggingDspDistributor, IDspDistributor>();
 
         // Picks a distributor by key using Autofac's IIndex (see the class for details).
         builder.RegisterType<AutofacDspDistributorProvider>().As<IDspDistributorProvider>().InstancePerLifetimeScope();

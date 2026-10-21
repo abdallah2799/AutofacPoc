@@ -18,7 +18,7 @@ one interface with many implementations chosen at runtime, plus logging and secu
 ```
 src/
 ├── AutofacPoc.Domain           Business objects (Release). References nothing.
-├── AutofacPoc.Application      Use cases + interfaces they need (IDspDistributor...). → Domain
+├── AutofacPoc.Application      Use cases + interfaces they need (IDspDistributor...) + decorators. → Domain
 ├── AutofacPoc.Infrastructure   Implementations of those interfaces (SpotifyDistributor...). → Application
 ├── AutofacPoc.Api.MicrosoftDI  Web API using the BUILT-IN container      → http://localhost:5001
 │   ├── Registrations/          AddApplication(), AddInfrastructure() extension methods
@@ -81,8 +81,8 @@ The code is documented with `///` comments; they also show up as tooltips in you
 | 2 | **Modules**: each layer registers its own services | ✅ Done |
 | 3 | **Keyed services + `IEnumerable`**: pick the DSP at runtime, distribute to all | ✅ Done |
 | 4 | **Assembly scanning**: a new DSP = one new class, no registration edits | ✅ Done |
-| 5 | **Decorators**: a logging wrapper around `IDspDistributor` | ⏳ Next |
-| 6 | **Interceptors (AOP)**: one logging and one security interceptor for many services | |
+| 5 | **Decorators**: a logging wrapper around `IDspDistributor` | ✅ Done |
+| 6 | **Interceptors (AOP)**: one logging and one security interceptor for many services | ⏳ Next |
 | 7 | **Property injection**: a `BaseController` that gets its logger automatically | |
 
 ### Phase 0: Setup
@@ -312,3 +312,77 @@ foreach (var distributorType in distributorTypes)
 **Be careful with scanning:** it's convenient, but registrations become less visible. You can no longer search the
 code for `AnghamiDistributor` to see where it is registered. Use clear rules (an interface plus an attribute, as here)
 so the "magic" stays easy to explain.
+
+### Phase 5: Decorators
+
+**Problem:** we want every distribution logged (which DSP, which release, how long it took). Writing log lines inside
+Spotify, Anghami, Apple Music and YouTube Music means repeating the same code four times, and mixing logging into
+classes whose job is delivering.
+
+**The decorator pattern:** a class that implements the **same interface**, receives the real object in its constructor,
+and forwards the call, adding behaviour before and after:
+
+```csharp
+public class LoggingDspDistributor : IDspDistributor
+{
+    public LoggingDspDistributor(IDspDistributor inner, ILogger<LoggingDspDistributor> logger) { ... }
+
+    public DistributionResult Distribute(Release release)
+    {
+        _logger.LogInformation("[Decorator] {Distributor} starting ...", ...);
+        var result = _inner.Distribute(release);   // the real work
+        _logger.LogInformation("[Decorator] {Distributor} finished in {ElapsedMs} ms ...", ...);
+        return result;
+    }
+}
+```
+
+Callers still receive an `IDspDistributor` and can't tell it is wrapped. The four distributor classes did not change.
+
+**Autofac: one line** (`InfrastructureModule.cs`):
+
+```csharp
+builder.RegisterDecorator<LoggingDspDistributor, IDspDistributor>();
+```
+
+Autofac now wraps every `IDspDistributor` it creates, whether it is found **by key** (`IIndex`) or as part of
+**all** distributors (`IEnumerable`). It also works with the scanned registrations from Phase 4: a new DSP is
+logged automatically.
+
+**Built-in DI: by hand** (`InfrastructureRegistrations.cs`). There is no decorator feature, so inside the scanning loop
+each keyed registration becomes a factory that creates the real class and wraps it with `new`:
+
+```csharp
+services.AddScoped(distributorType);                       // the real class
+services.AddKeyedScoped<IDspDistributor>(dsp, (sp, key) =>
+    new LoggingDspDistributor(
+        (IDspDistributor)sp.GetRequiredService(distributorType),
+        sp.GetRequiredService<ILogger<LoggingDspDistributor>>()));
+```
+
+Every new dependency of the decorator means editing this `new` call. (The **Scrutor** package adds
+`services.Decorate<...>()` to the built-in container as an alternative.)
+
+**See it work:** run either API, call any distribute endpoint, and watch its console:
+
+```
+[Decorator] AnghamiDistributor starting: release 1 'Lost in Cairo'
+[Decorator] AnghamiDistributor finished in 0 ms: Delivered to Anghami
+```
+
+**Comparison:**
+
+| | Built-in DI | Autofac |
+|---|---|---|
+| Wrap every implementation of an interface | Factory lambda per registration, building the wrapper with `new` | ✅ `RegisterDecorator<TDecorator, TService>()` |
+| Decorator's own dependencies (logger...) | Resolved by hand inside the lambda | ✅ Injected automatically |
+| Several decorators (e.g. logging + retry) | Nest the `new` calls yourself | ✅ One `RegisterDecorator` line each; applied in registration order |
+| Works with keyed + scanned registrations | Only if your loop handles it | ✅ |
+
+**Where the decorator lives:** `Application/Decorators/`. It only needs logging *abstractions*
+(`Microsoft.Extensions.Logging.Abstractions`), not a container. It is deliberately **not** in Infrastructure:
+the Phase 4 scan registers every `IDspDistributor` in that project, so it would also register the decorator as if
+it were a fifth DSP. Keep decorators out of scanned folders, or make the scan rule exclude them.
+
+**Limit of decorators:** one decorator wraps one interface. Logging `IReleaseRepository` too would need a
+second decorator class, and so on for every interface. Phase 6 (interceptors) removes that limit.

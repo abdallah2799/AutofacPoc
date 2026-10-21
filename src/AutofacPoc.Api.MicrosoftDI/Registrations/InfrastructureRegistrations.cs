@@ -1,5 +1,6 @@
 using AutofacPoc.Api.MicrosoftDI.Distribution;
 using AutofacPoc.Application.Abstractions;
+using AutofacPoc.Application.Decorators;
 using AutofacPoc.Infrastructure.Releases;
 
 namespace AutofacPoc.Api.MicrosoftDI.Registrations;
@@ -34,11 +35,19 @@ public static class InfrastructureRegistrations
         {
             var dsp = GetDsp(distributorType);
 
-            // Step 1: register under its key.
-            services.AddKeyedScoped(typeof(IDspDistributor), dsp, distributorType);
+            // Step 1: register the real class by itself, so it can be created and then wrapped.
+            services.AddScoped(distributorType);
 
-            // Step 2: register AGAIN without a key, or it won't appear in IEnumerable<IDspDistributor>.
-            // The lambda forwards to the keyed one, so both return the same object per request.
+            // Step 2: register under its key, but return the real class WRAPPED in the logging decorator.
+            // The built-in container has no decorator feature, so we build the wrapper ourselves with `new`.
+            // (The Scrutor package adds services.Decorate<...>() as an alternative.)
+            services.AddKeyedScoped<IDspDistributor>(dsp, (sp, key) =>
+                new LoggingDspDistributor(
+                    (IDspDistributor)sp.GetRequiredService(distributorType),
+                    sp.GetRequiredService<ILogger<LoggingDspDistributor>>()));
+
+            // Step 3: register AGAIN without a key, or it won't appear in IEnumerable<IDspDistributor>.
+            // The lambda forwards to the keyed (already wrapped) one, so both return the same object per request.
             services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(dsp));
         }
 
