@@ -1,0 +1,7 @@
+@baseUrl = http://localhost:5001
+
+### Distribute release 1 (exists)
+POST {{baseUrl}}/releases/1/distribute
+
+### Distribute release 99 (does not exist -> 404)
+POST {{baseUrl}}/releases/99/distribute

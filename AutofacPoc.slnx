@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AutofacPoc.Api.Autofac/AutofacPoc.Api.Autofac.csproj" />
+    <Project Path="src/AutofacPoc.Api.MicrosoftDI/AutofacPoc.Api.MicrosoftDI.csproj" />
+    <Project Path="src/AutofacPoc.Application/AutofacPoc.Application.csproj" />
+    <Project Path="src/AutofacPoc.Domain/AutofacPoc.Domain.csproj" />
+    <Project Path="src/AutofacPoc.Infrastructure/AutofacPoc.Infrastructure.csproj" />
+  </Folder>
+</Solution>
