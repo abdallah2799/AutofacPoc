@@ -17,4 +17,7 @@ public enum Dsp
 
     /// <summary>Apple Music.</summary>
     AppleMusic,
+
+    /// <summary>YouTube Music.</summary>
+    YouTubeMusic,
 }

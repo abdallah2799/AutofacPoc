@@ -1,5 +1,6 @@
 using AutofacPoc.Application.Abstractions;
 using AutofacPoc.Application.Distribution;
+using AutofacPoc.Domain.Distribution;
 using AutofacPoc.Domain.Releases;
 
 namespace AutofacPoc.Infrastructure.Distributors;
@@ -9,9 +10,10 @@ namespace AutofacPoc.Infrastructure.Distributors;
 /// </summary>
 /// <remarks>
 /// One of several <see cref="IDspDistributor"/> implementations, one per DSP.
-/// The container registers it under its DSP key, so the app can pick it at runtime
-/// or include it when distributing to all DSPs.
+/// The container finds it by scanning this project, and registers it under the key
+/// given in <see cref="DistributesToAttribute"/>. No registration code mentions this class.
 /// </remarks>
+[DistributesTo(Dsp.Spotify)]
 public class SpotifyDistributor : IDspDistributor
 {
     /// <inheritdoc />

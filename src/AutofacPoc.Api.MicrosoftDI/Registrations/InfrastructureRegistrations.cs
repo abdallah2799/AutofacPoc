@@ -1,7 +1,5 @@
 using AutofacPoc.Api.MicrosoftDI.Distribution;
 using AutofacPoc.Application.Abstractions;
-using AutofacPoc.Domain.Distribution;
-using AutofacPoc.Infrastructure.Distributors;
 using AutofacPoc.Infrastructure.Releases;
 
 namespace AutofacPoc.Api.MicrosoftDI.Registrations;
@@ -24,22 +22,40 @@ public static class InfrastructureRegistrations
         // One for the whole app: the fake data must be shared.
         services.AddSingleton<IReleaseRepository, InMemoryReleaseRepository>();
 
-        // ---- One distributor per DSP: step 1, register each under its key ----
-        services.AddKeyedScoped<IDspDistributor, SpotifyDistributor>(Dsp.Spotify);
-        services.AddKeyedScoped<IDspDistributor, AnghamiDistributor>(Dsp.Anghami);
-        services.AddKeyedScoped<IDspDistributor, AppleMusicDistributor>(Dsp.AppleMusic);
+        // ---- Every distributor, found by scanning (written by hand) ----
+        // The built-in container has no assembly scanning, so we do it ourselves with reflection:
+        // list every class in the Infrastructure project that implements IDspDistributor.
+        // (The Scrutor NuGet package adds scanning to the built-in container, as an alternative.)
+        var infrastructureAssembly = typeof(InMemoryReleaseRepository).Assembly; // any class from that project
+        var distributorTypes = infrastructureAssembly.GetTypes()
+            .Where(type => type.IsClass && !type.IsAbstract && typeof(IDspDistributor).IsAssignableFrom(type));
 
-        // ---- Step 2: register them AGAIN without a key ----
-        // In the built-in container, keyed registrations are NOT included when someone asks for
-        // IEnumerable<IDspDistributor>. So each DSP needs a second, unkeyed registration.
-        // The lambda forwards to the keyed one, so both return the same object per request.
-        // (Autofac does both in one registration: .As<...>().Keyed<...>(key).)
-        services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(Dsp.Spotify));
-        services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(Dsp.Anghami));
-        services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(Dsp.AppleMusic));
+        foreach (var distributorType in distributorTypes)
+        {
+            var dsp = GetDsp(distributorType);
+
+            // Step 1: register under its key.
+            services.AddKeyedScoped(typeof(IDspDistributor), dsp, distributorType);
+
+            // Step 2: register AGAIN without a key, or it won't appear in IEnumerable<IDspDistributor>.
+            // The lambda forwards to the keyed one, so both return the same object per request.
+            services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(dsp));
+        }
 
         // Picks a distributor by key at runtime (see the class for details).
         services.AddScoped<IDspDistributorProvider, MicrosoftDiDspDistributorProvider>();
         return services;
+    }
+
+    /// <summary>Reads the DSP key from the class's <see cref="DistributesToAttribute"/>.</summary>
+    /// <param name="type">A distributor class found by the scan.</param>
+    /// <exception cref="InvalidOperationException">The class has no [DistributesTo] attribute.</exception>
+    private static object GetDsp(Type type)
+    {
+        var attribute = (DistributesToAttribute?)Attribute.GetCustomAttribute(type, typeof(DistributesToAttribute));
+        if (attribute == null)
+            throw new InvalidOperationException($"{type.Name} must have a [DistributesTo(...)] attribute.");
+
+        return attribute.Dsp;
     }
 }

@@ -56,7 +56,7 @@ dotnet run --project src/AutofacPoc.Api.Autofac       # opens http://localhost:5
 
 | Endpoint | What it does |
 |---|---|
-| `POST /releases/{releaseId}/distribute/{dsp}` | Sends the release to one DSP: `Spotify`, `Anghami` or `AppleMusic`. |
+| `POST /releases/{releaseId}/distribute/{dsp}` | Sends the release to one DSP: `Spotify`, `Anghami`, `AppleMusic` or `YouTubeMusic`. |
 | `POST /releases/{releaseId}/distribute-all` | Sends the release to every DSP and returns one result each. |
 
 Releases `1` and `2` exist; `99` returns 404. An unknown DSP (e.g. `TikTok`) returns 400.
@@ -80,8 +80,8 @@ The code is documented with `///` comments; they also show up as tooltips in you
 | 1 | Plug Autofac into ASP.NET Core, basic registration | ✅ Done |
 | 2 | **Modules**: each layer registers its own services | ✅ Done |
 | 3 | **Keyed services + `IEnumerable`**: pick the DSP at runtime, distribute to all | ✅ Done |
-| 4 | **Assembly scanning**: a new DSP = one new class, no registration edits | ⏳ Next |
-| 5 | **Decorators**: a logging wrapper around `IDspDistributor` | |
+| 4 | **Assembly scanning**: a new DSP = one new class, no registration edits | ✅ Done |
+| 5 | **Decorators**: a logging wrapper around `IDspDistributor` | ⏳ Next |
 | 6 | **Interceptors (AOP)**: one logging and one security interceptor for many services | |
 | 7 | **Property injection**: a `BaseController` that gets its logger automatically | |
 
@@ -248,4 +248,67 @@ public IDspDistributor GetFor(Dsp dsp) => _serviceProvider.GetRequiredKeyedServi
 enum **names** instead of numbers.
 
 **Still to improve:** adding a DSP means a new class **plus** new registration lines. Phase 4 removes the
-registration lines with assembly scanning.
+registration lines with assembly scanning. (Phase 4 replaced the per-DSP registrations shown above with a scan.)
+
+### Phase 4: Assembly scanning
+
+**Problem:** after Phase 3, adding a DSP meant a new class **plus** registration lines (one block in Autofac, two
+lines in the built-in DI). Easy to forget, and the registration files grow with every DSP.
+
+**Autofac's answer: scan the project.** An *assembly* is one compiled project (`.dll`). Autofac can look through it
+and register every class that matches a rule:
+
+```csharp
+builder.RegisterAssemblyTypes(infrastructureAssembly)
+       .AssignableTo<IDspDistributor>()              // every class that implements IDspDistributor
+       .As<IDspDistributor>()                        // included in IEnumerable<IDspDistributor>
+       .Keyed<IDspDistributor>(type => GetDsp(type)) // key read from the class's attribute
+       .InstancePerLifetimeScope();
+```
+
+**Where does each key come from?** Each distributor says which DSP it serves with an attribute:
+
+```csharp
+[DistributesTo(Dsp.YouTubeMusic)]
+public class YouTubeMusicDistributor : IDspDistributor { ... }
+```
+
+`DistributesToAttribute` lives in the Application layer and is plain metadata, not tied to any container.
+A distributor without it makes the app fail at startup with a clear message, instead of failing later on a request.
+
+**Proof:** YouTube Music was added in this phase with only two changes: one value in the `Dsp` enum and
+the new `YouTubeMusicDistributor.cs`. No registration file mentions it, and it appears in both endpoints and in
+Scalar's dropdown.
+
+**Modules are scanned too.** `Program.cs` now loads every module in the API project with one line, so a new
+module is picked up without editing `Program.cs`:
+
+```csharp
+container.RegisterAssemblyModules(typeof(Program).Assembly);
+```
+
+**The built-in DI equivalent** has no scanning, so `InfrastructureRegistrations.cs` does it by hand with reflection:
+
+```csharp
+var distributorTypes = infrastructureAssembly.GetTypes()
+    .Where(type => type.IsClass && !type.IsAbstract && typeof(IDspDistributor).IsAssignableFrom(type));
+
+foreach (var distributorType in distributorTypes)
+{
+    var dsp = GetDsp(distributorType);
+    services.AddKeyedScoped(typeof(IDspDistributor), dsp, distributorType);
+    services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(dsp));
+}
+```
+
+**Comparison:**
+
+| | Built-in DI | Autofac |
+|---|---|---|
+| Register every class matching a rule | Write the reflection loop yourself (or add the **Scrutor** package) | ✅ `RegisterAssemblyTypes(...)` + filters (`AssignableTo`, `Where`, ...) |
+| Key each scanned class | In your own loop | ✅ `.Keyed<T>(type => key)` |
+| Load every registration group automatically | ❌ Call each `AddXxx()` yourself | ✅ `RegisterAssemblyModules(...)` |
+
+**Be careful with scanning:** it's convenient, but registrations become less visible. You can no longer search the
+code for `AnghamiDistributor` to see where it is registered. Use clear rules (an interface plus an attribute, as here)
+so the "magic" stays easy to explain.

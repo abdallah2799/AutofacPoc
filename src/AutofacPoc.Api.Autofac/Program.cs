@@ -5,7 +5,6 @@
 // =====================================================================
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
-using AutofacPoc.Api.Autofac.Modules;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 using System.Text.Json.Serialization;
@@ -49,12 +48,13 @@ builder.Host.UseServiceProviderFactory(new AutofacServiceProviderFactory());
 
 // ---- Step 2: register our services, one Autofac MODULE per layer ----
 // Each module (see the Modules folder) holds that layer's registrations.
+// RegisterAssemblyModules finds and loads EVERY module in this project, so a new module
+// is picked up without editing this file.
 // Everything added to builder.Services above (AddControllers, AddOpenApi...) still works:
 // Autofac imports those registrations automatically.
 builder.Host.ConfigureContainer<ContainerBuilder>(container =>
 {
-    container.RegisterModule<ApplicationModule>();
-    container.RegisterModule<InfrastructureModule>();
+    container.RegisterAssemblyModules(typeof(Program).Assembly);
 });
 
 var app = builder.Build();
