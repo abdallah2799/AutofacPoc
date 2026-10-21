@@ -21,6 +21,8 @@ public static class InfrastructureRegistrations
     public static IServiceCollection AddInfrastructure(this IServiceCollection services)
     {
         // One for the whole app: the fake data must be shared.
+        // Not logged here: logging it too would need another decorator class written for IReleaseRepository.
+        // (The Autofac API logs it with the same interceptor as the distributors.)
         services.AddSingleton<IReleaseRepository, InMemoryReleaseRepository>();
 
         // ---- Every distributor, found by scanning (written by hand) ----
@@ -38,13 +40,18 @@ public static class InfrastructureRegistrations
             // Step 1: register the real class by itself, so it can be created and then wrapped.
             services.AddScoped(distributorType);
 
-            // Step 2: register under its key, but return the real class WRAPPED in the logging decorator.
-            // The built-in container has no decorator feature, so we build the wrapper ourselves with `new`.
+            // Step 2: register under its key, but return the real class WRAPPED twice:
+            //   SecurityDspDistributor  ->  LoggingDspDistributor  ->  real distributor
+            // Security is outside so denied calls stop early; logging is inside so it sees the real
+            // class name (e.g. "AnghamiDistributor"). Side effect: denied calls are not logged.
+            // The built-in container has no decorators or interceptors, so we build the chain with `new`.
             // (The Scrutor package adds services.Decorate<...>() as an alternative.)
             services.AddKeyedScoped<IDspDistributor>(dsp, (sp, key) =>
-                new LoggingDspDistributor(
-                    (IDspDistributor)sp.GetRequiredService(distributorType),
-                    sp.GetRequiredService<ILogger<LoggingDspDistributor>>()));
+                new SecurityDspDistributor(
+                    new LoggingDspDistributor(
+                        (IDspDistributor)sp.GetRequiredService(distributorType),
+                        sp.GetRequiredService<ILogger<LoggingDspDistributor>>()),
+                    sp.GetRequiredService<ICurrentUser>()));
 
             // Step 3: register AGAIN without a key, or it won't appear in IEnumerable<IDspDistributor>.
             // The lambda forwards to the keyed (already wrapped) one, so both return the same object per request.

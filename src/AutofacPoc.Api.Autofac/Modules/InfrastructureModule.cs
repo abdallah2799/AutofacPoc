@@ -1,7 +1,8 @@
 using Autofac;
+using Autofac.Extras.DynamicProxy;
 using AutofacPoc.Api.Autofac.Distribution;
+using AutofacPoc.Api.Autofac.Interceptors;
 using AutofacPoc.Application.Abstractions;
-using AutofacPoc.Application.Decorators;
 using AutofacPoc.Infrastructure.Releases;
 
 namespace AutofacPoc.Api.Autofac.Modules;
@@ -19,8 +20,15 @@ public class InfrastructureModule : Module
     /// <param name="builder">The same <see cref="ContainerBuilder"/> used in Program.cs.</param>
     protected override void Load(ContainerBuilder builder)
     {
+        // ---- INTERCEPTORS: registered once, then attached to any service below ----
+        builder.RegisterType<LoggingInterceptor>();
+        builder.RegisterType<SecurityInterceptor>();
+
         // One for the whole app (built-in DI: AddSingleton): the fake data must be shared.
-        builder.RegisterType<InMemoryReleaseRepository>().As<IReleaseRepository>().SingleInstance();
+        // The SAME logging interceptor as the distributors, on a different interface.
+        builder.RegisterType<InMemoryReleaseRepository>().As<IReleaseRepository>().SingleInstance()
+               .EnableInterfaceInterceptors()
+               .InterceptedBy(typeof(LoggingInterceptor));
 
         // ---- Every distributor, found by ASSEMBLY SCANNING ----
         // Instead of one registration per DSP, Autofac looks through the Infrastructure project
@@ -32,13 +40,13 @@ public class InfrastructureModule : Module
                .AssignableTo<IDspDistributor>()        // only classes that implement IDspDistributor
                .As<IDspDistributor>()                  // included in IEnumerable<IDspDistributor>
                .Keyed<IDspDistributor>(type => GetDsp(type)) // key read from [DistributesTo(...)]
-               .InstancePerLifetimeScope();
+               .InstancePerLifetimeScope()
+               .EnableInterfaceInterceptors()                // wrap each one in a runtime proxy...
+               .InterceptedBy(typeof(LoggingInterceptor),    // ...that logs first,
+                              typeof(SecurityInterceptor));  // ...then checks [RequiresPermission]
 
-        // ---- DECORATOR: wrap every distributor with logging ----
-        // Whenever anyone gets an IDspDistributor (by key or in the "all" list), Autofac builds the
-        // real one (e.g. SpotifyDistributor), then passes it as "inner" to a new LoggingDspDistributor,
-        // and returns the wrapper. The distributor classes themselves don't change.
-        builder.RegisterDecorator<LoggingDspDistributor, IDspDistributor>();
+        // Phase 5's RegisterDecorator<LoggingDspDistributor, IDspDistributor>() was removed here:
+        // LoggingInterceptor now does the same job, for more than one interface.
 
         // Picks a distributor by key using Autofac's IIndex (see the class for details).
         builder.RegisterType<AutofacDspDistributorProvider>().As<IDspDistributorProvider>().InstancePerLifetimeScope();

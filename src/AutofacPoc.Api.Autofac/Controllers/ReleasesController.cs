@@ -37,15 +37,19 @@ public class ReleasesController : ControllerBase
     /// registered under that key (Spotify, Anghami or AppleMusic).
     ///
     /// Try release **1** or **2** (they exist) and **99** (it doesn't).
+    ///
+    /// **Permission needed:** send the header `X-Permissions: distribute`, or you get **403**.
     /// </remarks>
     /// <param name="releaseId">Unique number of the release, e.g. 1.</param>
     /// <param name="dsp">Which DSP to deliver to: Spotify, Anghami or AppleMusic.</param>
     /// <response code="200">The release was delivered.</response>
     /// <response code="400">The DSP name is not one we support.</response>
+    /// <response code="403">The caller lacks the "distribute" permission.</response>
     /// <response code="404">No release has this id.</response>
     [HttpPost("{releaseId}/distribute/{dsp}")]
     [ProducesResponseType(typeof(DistributionResult), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(string), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(string), StatusCodes.Status404NotFound)]
     public IActionResult Distribute(int releaseId, Dsp dsp)
     {
@@ -60,12 +64,16 @@ public class ReleasesController : ControllerBase
     /// <remarks>
     /// Uses every distributor the container knows about (one per DSP),
     /// so a newly registered DSP is included without changing this endpoint.
+    ///
+    /// **Permission needed:** send the header `X-Permissions: distribute`, or you get **403**.
     /// </remarks>
     /// <param name="releaseId">Unique number of the release, e.g. 1.</param>
     /// <response code="200">One result per DSP.</response>
+    /// <response code="403">The caller lacks the "distribute" permission.</response>
     /// <response code="404">No release has this id.</response>
     [HttpPost("{releaseId}/distribute-all")]
     [ProducesResponseType(typeof(List<DistributionResult>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(string), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(string), StatusCodes.Status404NotFound)]
     public IActionResult DistributeToAll(int releaseId)
     {
