@@ -46,6 +46,10 @@ builder.Services.AddScoped<DistributeReleaseService>();
 
 var app = builder.Build();
 
+// Proof of which DI container is running: look for this line in the console at startup.
+// Built-in DI prints "ServiceProvider"; Autofac prints "AutofacServiceProvider".
+app.Logger.LogInformation("DI container in use: {Container}", app.Services.GetType().Name);
+
 // API docs only while developing, never in production.
 if (app.Environment.IsDevelopment())
 {

@@ -70,8 +70,8 @@ The code is documented with `///` comments; they also show up as tooltips in you
 | # | Feature | Status |
 |---|---|---|
 | 0 | Setup: Clean Architecture layers, two APIs, Scalar docs | ✅ Done |
-| 1 | Plug Autofac into ASP.NET Core, basic registration | ⏳ Next |
-| 2 | **Modules**: each layer registers its own services | |
+| 1 | Plug Autofac into ASP.NET Core, basic registration | ✅ Done |
+| 2 | **Modules**: each layer registers its own services | ⏳ Next |
 | 3 | **Keyed services + `IEnumerable`**: pick the DSP at runtime, distribute to all | |
 | 4 | **Assembly scanning**: a new DSP = one new class, no registration edits | |
 | 5 | **Decorators**: a logging wrapper around `IDspDistributor` | |
@@ -88,3 +88,40 @@ The code is documented with `///` comments; they also show up as tooltips in you
 - Scalar + OpenAPI document the endpoints; `Directory.Build.props` turns on XML docs for every project
   so `///` comments flow into Scalar.
 - **Limitation to remember:** `IDspDistributor` can only map to one class (Spotify). Phase 3 fixes that.
+
+### Phase 1: Plug Autofac into ASP.NET Core
+
+**Package:** `Autofac.Extensions.DependencyInjection` (it brings in `Autofac` itself). Only the Autofac API has it.
+
+**Two steps in `Program.cs`:**
+
+```csharp
+// 1. Use Autofac instead of the built-in container.
+builder.Host.UseServiceProviderFactory(new AutofacServiceProviderFactory());
+
+// 2. Register services with Autofac.
+builder.Host.ConfigureContainer<ContainerBuilder>(container =>
+{
+    container.RegisterType<InMemoryReleaseRepository>().As<IReleaseRepository>().SingleInstance();
+    container.RegisterType<SpotifyDistributor>().As<IDspDistributor>().InstancePerLifetimeScope();
+    container.RegisterType<DistributeReleaseService>().InstancePerLifetimeScope();
+});
+```
+
+**Same registrations, two syntaxes:**
+
+| Built-in DI (`Api.MicrosoftDI`) | Autofac (`Api.Autofac`) | Meaning |
+|---|---|---|
+| `AddSingleton<IX, X>()` | `RegisterType<X>().As<IX>().SingleInstance()` | One object for the whole app |
+| `AddScoped<IX, X>()` | `RegisterType<X>().As<IX>().InstancePerLifetimeScope()` | One object per HTTP request |
+| `AddTransient<IX, X>()` | `RegisterType<X>().As<IX>()` (the default) | A new object every time one is needed |
+
+**Things to notice:**
+- Nothing else changed: not the controller, not the Application or Infrastructure layers. Swapping the container
+  only touches the composition root.
+- `builder.Services.AddControllers()` and `AddOpenApi()` still work. Autofac imports everything registered in
+  `builder.Services`, so you can mix both styles, which helps when moving an existing project to Autofac step by step.
+- Each API logs which container it runs at startup: `DI container in use: ServiceProvider` (built-in) vs
+  `DI container in use: AutofacServiceProvider` (Autofac).
+- At this point Autofac does the same job as the built-in container with slightly longer syntax.
+  Its real advantages start in Phase 2.
