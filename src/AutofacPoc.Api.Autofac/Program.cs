@@ -8,10 +8,16 @@ using Autofac.Extensions.DependencyInjection;
 using AutofacPoc.Api.Autofac.Modules;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+
+// Describe enums (like Dsp) by their names ("Spotify") instead of numbers (0),
+// so Scalar shows a dropdown of DSP names. The OpenAPI generator reads these JSON settings.
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 // OpenAPI = a JSON description of every endpoint, built from the controllers
 // and their /// comments. Scalar (below) shows it as an interactive page.

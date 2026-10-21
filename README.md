@@ -21,9 +21,11 @@ src/
 ├── AutofacPoc.Application      Use cases + interfaces they need (IDspDistributor...). → Domain
 ├── AutofacPoc.Infrastructure   Implementations of those interfaces (SpotifyDistributor...). → Application
 ├── AutofacPoc.Api.MicrosoftDI  Web API using the BUILT-IN container      → http://localhost:5001
-│   └── Registrations/          AddApplication(), AddInfrastructure() extension methods
+│   ├── Registrations/          AddApplication(), AddInfrastructure() extension methods
+│   └── Distribution/           Picks a DSP's distributor by key (built-in keyed services)
 └── AutofacPoc.Api.Autofac      The SAME Web API using AUTOFAC            → http://localhost:5002
-    └── Modules/                ApplicationModule, InfrastructureModule
+    ├── Modules/                ApplicationModule, InfrastructureModule
+    └── Distribution/           Picks a DSP's distributor by key (Autofac IIndex)
 ```
 
 Domain, Application and Infrastructure are **shared** and never mention a DI container.
@@ -49,12 +51,15 @@ dotnet run --project src/AutofacPoc.Api.Autofac       # opens http://localhost:5
   click **Send request** above a call.
 - **curl**:
   ```bash
-  curl -X POST http://localhost:5001/releases/1/distribute
+  curl -X POST http://localhost:5001/releases/1/distribute/Spotify
   ```
 
 | Endpoint | What it does |
 |---|---|
-| `POST /releases/{releaseId}/distribute` | Sends the release to Spotify. Releases `1` and `2` exist; `99` returns 404. |
+| `POST /releases/{releaseId}/distribute/{dsp}` | Sends the release to one DSP: `Spotify`, `Anghami` or `AppleMusic`. |
+| `POST /releases/{releaseId}/distribute-all` | Sends the release to every DSP and returns one result each. |
+
+Releases `1` and `2` exist; `99` returns 404. An unknown DSP (e.g. `TikTok`) returns 400.
 
 ## How to follow the phases
 
@@ -74,8 +79,8 @@ The code is documented with `///` comments; they also show up as tooltips in you
 | 0 | Setup: Clean Architecture layers, two APIs, Scalar docs | ✅ Done |
 | 1 | Plug Autofac into ASP.NET Core, basic registration | ✅ Done |
 | 2 | **Modules**: each layer registers its own services | ✅ Done |
-| 3 | **Keyed services + `IEnumerable`**: pick the DSP at runtime, distribute to all | ⏳ Next |
-| 4 | **Assembly scanning**: a new DSP = one new class, no registration edits | |
+| 3 | **Keyed services + `IEnumerable`**: pick the DSP at runtime, distribute to all | ✅ Done |
+| 4 | **Assembly scanning**: a new DSP = one new class, no registration edits | ⏳ Next |
 | 5 | **Decorators**: a logging wrapper around `IDspDistributor` | |
 | 6 | **Interceptors (AOP)**: one logging and one security interceptor for many services | |
 | 7 | **Property injection**: a `BaseController` that gets its logger automatically | |
@@ -90,6 +95,7 @@ The code is documented with `///` comments; they also show up as tooltips in you
 - Scalar + OpenAPI document the endpoints; `Directory.Build.props` turns on XML docs for every project
   so `///` comments flow into Scalar.
 - **Limitation to remember:** `IDspDistributor` can only map to one class (Spotify). Phase 3 fixes that.
+  (The Phase 0 endpoint `POST /releases/{id}/distribute` was replaced in Phase 3.)
 
 ### Phase 1: Plug Autofac into ASP.NET Core
 
@@ -178,3 +184,68 @@ Modules become better when you need more:
 of any DI container (they don't reference Autofac at all). Many teams instead put each module **inside its layer**
 (e.g. `InfrastructureModule` in the Infrastructure project). That keeps registrations next to the classes,
 but every layer then depends on the Autofac package. Both are valid; pick one and stay consistent.
+
+### Phase 3: Keyed services + `IEnumerable`
+
+**Problem:** there is one `IDspDistributor` per DSP (Spotify, Anghami, Apple Music). We need to:
+1. pick **one** at runtime, from the URL: `POST /releases/1/distribute/Anghami`;
+2. use **all** of them at once: `POST /releases/1/distribute-all`.
+
+**1. Pick one by key (keyed services).** Each distributor is registered under a key, the `Dsp` enum value.
+In Autofac, one registration can expose the class both ways:
+
+```csharp
+builder.RegisterType<AnghamiDistributor>()
+       .As<IDspDistributor>()                  // included in IEnumerable<IDspDistributor>
+       .Keyed<IDspDistributor>(Dsp.Anghami)    // found by key
+       .InstancePerLifetimeScope();
+```
+
+To look one up, a class simply asks for **`IIndex<Dsp, IDspDistributor>`**, a dictionary of all keyed distributors
+that Autofac fills in:
+
+```csharp
+public AutofacDspDistributorProvider(IIndex<Dsp, IDspDistributor> distributors) { ... }
+public IDspDistributor GetFor(Dsp dsp) => _distributors[dsp];
+```
+
+**2. Use all of them (`IEnumerable<T>`).** When a constructor asks for `IEnumerable<IDspDistributor>`, the container
+passes every registered distributor. `DistributeToAllDspsService` never names a DSP, so a new DSP is included
+automatically. This part works the same in both containers.
+
+**Keeping Autofac out of the Application layer:** the use case can't ask for Autofac's `IIndex` (Application must
+not reference Autofac). So Application defines a tiny interface, `IDspDistributorProvider` ("give me the distributor
+for this DSP"), and each API implements it with its own container. This is the price of strict Clean Architecture.
+
+**The built-in DI equivalent** (`Api.MicrosoftDI/Registrations/InfrastructureRegistrations.cs`):
+
+```csharp
+// Step 1: keyed registration (supported since .NET 8)
+services.AddKeyedScoped<IDspDistributor, AnghamiDistributor>(Dsp.Anghami);
+// Step 2: register AGAIN without a key, or it won't appear in IEnumerable<IDspDistributor>
+services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(Dsp.Anghami));
+```
+
+And to choose a key at runtime, the provider takes the whole `IServiceProvider`:
+
+```csharp
+public MicrosoftDiDspDistributorProvider(IServiceProvider serviceProvider) { ... }
+public IDspDistributor GetFor(Dsp dsp) => _serviceProvider.GetRequiredKeyedService<IDspDistributor>(dsp);
+```
+
+**Comparison:**
+
+| | Built-in DI | Autofac |
+|---|---|---|
+| Register a class under a key | ✅ `AddKeyedScoped(key)` (.NET 8+) | ✅ `.Keyed<T>(key)` |
+| Same class keyed **and** in `IEnumerable<T>` | Two registrations per DSP (the second forwards to the first) | One registration: `.As<T>().Keyed<T>(key)` |
+| Choose the key at runtime | Inject `IServiceProvider` and ask it ("service locator": the constructor no longer shows what the class needs) | Inject `IIndex<TKey, T>`, a normal typed dependency |
+| Key known at compile time | `[FromKeyedServices(Dsp.Spotify)]` on a parameter | `[KeyFilter(Dsp.Spotify)]` on a parameter (its class registered with `.WithAttributeFiltering()`) |
+| `IEnumerable<T>` of all implementations | ✅ | ✅ |
+
+**Try it:** in Scalar, the `dsp` parameter is a dropdown (Spotify / Anghami / AppleMusic). This needs
+`ConfigureHttpJsonOptions(... JsonStringEnumConverter ...)` in `Program.cs`, which makes the OpenAPI document list
+enum **names** instead of numbers.
+
+**Still to improve:** adding a DSP means a new class **plus** new registration lines. Phase 4 removes the
+registration lines with assembly scanning.

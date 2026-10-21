@@ -26,7 +26,8 @@ public class ApplicationModule : Module
     {
         // One per HTTP request (built-in DI: AddScoped).
         // No .As<...>(): registered as its own class, because the controller asks for
-        // DistributeReleaseService itself, not for an interface.
+        // these services themselves, not for an interface.
         builder.RegisterType<DistributeReleaseService>().InstancePerLifetimeScope();
+        builder.RegisterType<DistributeToAllDspsService>().InstancePerLifetimeScope();
     }
 }

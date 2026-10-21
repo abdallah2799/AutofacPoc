@@ -1,7 +1,19 @@
 @baseUrl = http://localhost:5002
 
-### Distribute release 1 (exists)
-POST {{baseUrl}}/releases/1/distribute
+### Distribute release 1 to Spotify
+POST {{baseUrl}}/releases/1/distribute/Spotify
 
-### Distribute release 99 (does not exist -> 404)
-POST {{baseUrl}}/releases/99/distribute
+### Distribute release 1 to Anghami
+POST {{baseUrl}}/releases/1/distribute/Anghami
+
+### Distribute release 1 to Apple Music
+POST {{baseUrl}}/releases/1/distribute/AppleMusic
+
+### Distribute release 2 to every DSP at once
+POST {{baseUrl}}/releases/2/distribute-all
+
+### Unknown DSP -> 400
+POST {{baseUrl}}/releases/1/distribute/TikTok
+
+### Release that does not exist -> 404
+POST {{baseUrl}}/releases/99/distribute/Spotify

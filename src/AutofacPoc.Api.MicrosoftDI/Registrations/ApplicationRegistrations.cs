@@ -19,6 +19,7 @@ public static class ApplicationRegistrations
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         services.AddScoped<DistributeReleaseService>();
+        services.AddScoped<DistributeToAllDspsService>();
         return services;
     }
 }

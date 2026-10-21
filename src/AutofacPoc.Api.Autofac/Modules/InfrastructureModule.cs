@@ -1,5 +1,7 @@
 using Autofac;
+using AutofacPoc.Api.Autofac.Distribution;
 using AutofacPoc.Application.Abstractions;
+using AutofacPoc.Domain.Distribution;
 using AutofacPoc.Infrastructure.Distributors;
 using AutofacPoc.Infrastructure.Releases;
 
@@ -22,7 +24,27 @@ public class InfrastructureModule : Module
         // One for the whole app (built-in DI: AddSingleton): the fake data must be shared.
         builder.RegisterType<InMemoryReleaseRepository>().As<IReleaseRepository>().SingleInstance();
 
-        // One per HTTP request (built-in DI: AddScoped).
-        builder.RegisterType<SpotifyDistributor>().As<IDspDistributor>().InstancePerLifetimeScope();
+        // ---- One distributor per DSP ----
+        // Each registration exposes the class in TWO ways at once:
+        //   .As<IDspDistributor>()             -> included when someone asks for IEnumerable<IDspDistributor>
+        //   .Keyed<IDspDistributor>(Dsp.X)     -> found by key, through IIndex<Dsp, IDspDistributor>
+        // It is still ONE registration, so within a request both ways return the same object.
+        builder.RegisterType<SpotifyDistributor>()
+               .As<IDspDistributor>()
+               .Keyed<IDspDistributor>(Dsp.Spotify)
+               .InstancePerLifetimeScope();
+
+        builder.RegisterType<AnghamiDistributor>()
+               .As<IDspDistributor>()
+               .Keyed<IDspDistributor>(Dsp.Anghami)
+               .InstancePerLifetimeScope();
+
+        builder.RegisterType<AppleMusicDistributor>()
+               .As<IDspDistributor>()
+               .Keyed<IDspDistributor>(Dsp.AppleMusic)
+               .InstancePerLifetimeScope();
+
+        // Picks a distributor by key using Autofac's IIndex (see the class for details).
+        builder.RegisterType<AutofacDspDistributorProvider>().As<IDspDistributorProvider>().InstancePerLifetimeScope();
     }
 }

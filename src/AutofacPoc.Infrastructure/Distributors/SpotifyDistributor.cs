@@ -8,8 +8,9 @@ namespace AutofacPoc.Infrastructure.Distributors;
 /// Fake Spotify integration: pretends the delivery worked.
 /// </summary>
 /// <remarks>
-/// For now it is the only <see cref="IDspDistributor"/>. Phase 3 adds more DSPs
-/// and shows how Autofac picks the right one per request.
+/// One of several <see cref="IDspDistributor"/> implementations, one per DSP.
+/// The container registers it under its DSP key, so the app can pick it at runtime
+/// or include it when distributing to all DSPs.
 /// </remarks>
 public class SpotifyDistributor : IDspDistributor
 {

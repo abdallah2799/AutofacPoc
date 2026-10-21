@@ -1,4 +1,6 @@
+using AutofacPoc.Api.MicrosoftDI.Distribution;
 using AutofacPoc.Application.Abstractions;
+using AutofacPoc.Domain.Distribution;
 using AutofacPoc.Infrastructure.Distributors;
 using AutofacPoc.Infrastructure.Releases;
 
@@ -22,8 +24,22 @@ public static class InfrastructureRegistrations
         // One for the whole app: the fake data must be shared.
         services.AddSingleton<IReleaseRepository, InMemoryReleaseRepository>();
 
-        // One per HTTP request.
-        services.AddScoped<IDspDistributor, SpotifyDistributor>();
+        // ---- One distributor per DSP: step 1, register each under its key ----
+        services.AddKeyedScoped<IDspDistributor, SpotifyDistributor>(Dsp.Spotify);
+        services.AddKeyedScoped<IDspDistributor, AnghamiDistributor>(Dsp.Anghami);
+        services.AddKeyedScoped<IDspDistributor, AppleMusicDistributor>(Dsp.AppleMusic);
+
+        // ---- Step 2: register them AGAIN without a key ----
+        // In the built-in container, keyed registrations are NOT included when someone asks for
+        // IEnumerable<IDspDistributor>. So each DSP needs a second, unkeyed registration.
+        // The lambda forwards to the keyed one, so both return the same object per request.
+        // (Autofac does both in one registration: .As<...>().Keyed<...>(key).)
+        services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(Dsp.Spotify));
+        services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(Dsp.Anghami));
+        services.AddScoped<IDspDistributor>(sp => sp.GetRequiredKeyedService<IDspDistributor>(Dsp.AppleMusic));
+
+        // Picks a distributor by key at runtime (see the class for details).
+        services.AddScoped<IDspDistributorProvider, MicrosoftDiDspDistributorProvider>();
         return services;
     }
 }

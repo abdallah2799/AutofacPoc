@@ -7,10 +7,13 @@ namespace AutofacPoc.Application.Abstractions;
 /// Sends a release to ONE digital service provider (DSP), e.g. Spotify.
 /// </summary>
 /// <remarks>
-/// This is the key interface of the POC. Each DSP gets its own implementation
-/// (SpotifyDistributor, AnghamiDistributor, ...). Later phases use Autofac to
-/// pick the right one at runtime, wrap it with logging/security, and register
-/// new ones automatically.
+/// This is the key interface of the POC. Each DSP has its own implementation
+/// (SpotifyDistributor, AnghamiDistributor, AppleMusicDistributor).
+/// The container registers all of them, so the app can:
+/// <list type="bullet">
+/// <item>pick ONE by its <see cref="Domain.Distribution.Dsp"/> key, through <see cref="IDspDistributorProvider"/>;</item>
+/// <item>get ALL of them at once, by asking for <c>IEnumerable&lt;IDspDistributor&gt;</c>.</item>
+/// </list>
 /// </remarks>
 public interface IDspDistributor
 {
