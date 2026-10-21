@@ -1,0 +1,15 @@
+<!--
+  Settings applied to EVERY project in this repo (MSBuild picks this file up automatically).
+-->
+<Project>
+  <PropertyGroup>
+    <!--
+      Turns the /// comments into an XML file next to each .dll.
+      - Your IDE shows them as tooltips.
+      - The OpenAPI generator reads them, so they appear as descriptions in Scalar.
+      It also warns (CS1591) about any public type or member that has no /// comment,
+      which keeps the whole POC documented.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>
