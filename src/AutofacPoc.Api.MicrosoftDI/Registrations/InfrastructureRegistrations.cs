@@ -2,6 +2,7 @@ using AutofacPoc.Api.MicrosoftDI.Distribution;
 using AutofacPoc.Application.Abstractions;
 using AutofacPoc.Application.Decorators;
 using AutofacPoc.Infrastructure.Deliveries;
+using AutofacPoc.Infrastructure.Queues;
 using AutofacPoc.Infrastructure.Distributors;
 using AutofacPoc.Infrastructure.Releases;
 
@@ -29,6 +30,9 @@ public static class InfrastructureRegistrations
 
         // One shared delivery history for the whole app.
         services.AddSingleton<IDeliveryHistory, InMemoryDeliveryHistory>();
+
+        // One shared queue: the API adds scheduled distributions, the background worker takes them.
+        services.AddSingleton<IDistributionQueue, InMemoryDistributionQueue>();
 
         // ---- Every distributor, found by scanning (written by hand) ----
         // The built-in container has no assembly scanning, so we do it ourselves with reflection:

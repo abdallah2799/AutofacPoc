@@ -30,5 +30,9 @@ public class ApplicationModule : Module
         builder.RegisterType<DistributeReleaseService>().InstancePerLifetimeScope();
         builder.RegisterType<DistributeToAllDspsService>().InstancePerLifetimeScope();
         builder.RegisterType<GetDeliveriesService>().InstancePerLifetimeScope();
+        builder.RegisterType<ScheduleDistributionService>().InstancePerLifetimeScope();
+
+        // Nothing is registered for Lazy<T>, Func<T> or Owned<T> (Phase 8): Autofac builds them
+        // automatically for any registered T.
     }
 }

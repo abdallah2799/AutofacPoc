@@ -21,6 +21,7 @@ public static class ApplicationRegistrations
         services.AddScoped<DistributeReleaseService>();
         services.AddScoped<DistributeToAllDspsService>();
         services.AddScoped<GetDeliveriesService>();
+        services.AddScoped<ScheduleDistributionService>();
         return services;
     }
 }

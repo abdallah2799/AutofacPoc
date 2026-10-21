@@ -5,6 +5,7 @@
 // =====================================================================
 using AutofacPoc.Api.MicrosoftDI.Registrations;
 using AutofacPoc.Api.MicrosoftDI.Security;
+using AutofacPoc.Api.MicrosoftDI.Workers;
 using AutofacPoc.Application.Abstractions;
 using AutofacPoc.Application.Security;
 using AutofacPoc.Infrastructure.Notifications;
@@ -63,6 +64,9 @@ builder.Services.AddOpenApi(options =>
 // Web-specific services are registered here in builder.Services; this works for both containers.
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HeaderCurrentUser>();
+
+// Background worker that delivers scheduled distributions (Phase 8, see Workers/ScheduledDistributionWorker.cs).
+builder.Services.AddHostedService<ScheduledDistributionWorker>();
 
 // ---- Dependency registrations (built-in Microsoft DI), one extension method per layer ----
 // Each method (see the Registrations folder) holds that layer's registrations.

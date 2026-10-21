@@ -4,6 +4,7 @@ using AutofacPoc.Api.Autofac.Distribution;
 using AutofacPoc.Api.Autofac.Interceptors;
 using AutofacPoc.Application.Abstractions;
 using AutofacPoc.Infrastructure.Deliveries;
+using AutofacPoc.Infrastructure.Queues;
 using AutofacPoc.Infrastructure.Releases;
 
 namespace AutofacPoc.Api.Autofac.Modules;
@@ -33,6 +34,9 @@ public class InfrastructureModule : Module
 
         // One shared delivery history for the whole app.
         builder.RegisterType<InMemoryDeliveryHistory>().As<IDeliveryHistory>().SingleInstance();
+
+        // One shared queue: the API adds scheduled distributions, the background worker takes them.
+        builder.RegisterType<InMemoryDistributionQueue>().As<IDistributionQueue>().SingleInstance();
 
         // ---- Every distributor, found by ASSEMBLY SCANNING ----
         // Instead of one registration per DSP, Autofac looks through the Infrastructure project

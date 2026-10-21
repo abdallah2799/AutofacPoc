@@ -6,6 +6,7 @@
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
 using AutofacPoc.Api.Autofac.Security;
+using AutofacPoc.Api.Autofac.Workers;
 using AutofacPoc.Application.Abstractions;
 using AutofacPoc.Application.Security;
 using AutofacPoc.Infrastructure.Notifications;
@@ -64,6 +65,9 @@ builder.Services.AddOpenApi(options =>
 // Web-specific services are registered here in builder.Services; this works for both containers.
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HeaderCurrentUser>();
+
+// Background worker that delivers scheduled distributions (Phase 8, see Workers/ScheduledDistributionWorker.cs).
+builder.Services.AddHostedService<ScheduledDistributionWorker>();
 
 // ---- Step 1: tell ASP.NET Core to use Autofac instead of its built-in container ----
 // After this line, Autofac creates every object in the app: controllers' dependencies,

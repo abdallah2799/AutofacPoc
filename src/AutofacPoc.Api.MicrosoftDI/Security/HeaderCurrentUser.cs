@@ -9,6 +9,11 @@ namespace AutofacPoc.Api.MicrosoftDI.Security;
 /// <remarks>
 /// A deliberately simple stand-in for real authentication, so the POC can be tried from Scalar.
 /// A real app would read the logged-in user's claims instead. No header means no permissions.
+/// <para>
+/// Work running in the background (Phase 8's scheduled distributions) has no HTTP request at all.
+/// It runs as the system and is allowed, because the permission was already checked when the job
+/// was scheduled (see <c>ScheduleDistributionService</c>).
+/// </para>
 /// </remarks>
 public class HeaderCurrentUser : ICurrentUser
 {
@@ -27,7 +32,11 @@ public class HeaderCurrentUser : ICurrentUser
     /// <inheritdoc />
     public bool HasPermission(string permission)
     {
-        var header = _httpContextAccessor.HttpContext?.Request.Headers[HeaderName].ToString() ?? "";
+        var httpContext = _httpContextAccessor.HttpContext;
+        if (httpContext == null)
+            return true; // background work: no request, runs as the system (already checked when scheduled)
+
+        var header = httpContext.Request.Headers[HeaderName].ToString();
         var permissions = header.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         return permissions.Contains(permission, StringComparer.OrdinalIgnoreCase);
     }

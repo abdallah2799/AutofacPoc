@@ -1,4 +1,5 @@
 using AutofacPoc.Application.Abstractions;
+using Microsoft.Extensions.Logging;
 
 namespace AutofacPoc.Application.Distribution;
 
@@ -23,10 +24,18 @@ public class DistributeToAllDspsService
     /// <summary>Called by the DI container, which supplies the repository and all distributors.</summary>
     /// <param name="releaseRepository">Where to find releases.</param>
     /// <param name="distributors">Every registered distributor, one per DSP.</param>
-    public DistributeToAllDspsService(IReleaseRepository releaseRepository, IEnumerable<IDspDistributor> distributors)
+    /// <param name="logger">Used to show WHEN this service gets created (see Phase 8, <c>Lazy&lt;T&gt;</c>).</param>
+    public DistributeToAllDspsService(
+        IReleaseRepository releaseRepository,
+        IEnumerable<IDspDistributor> distributors,
+        ILogger<DistributeToAllDspsService> logger)
     {
         _releaseRepository = releaseRepository;
         _distributors = distributors;
+
+        // Building this service also builds every distributor. Phase 8 shows how Lazy<T> avoids
+        // doing that on requests that never use it.
+        logger.LogInformation("[Created] DistributeToAllDspsService, with {Count} distributors", distributors.Count());
     }
 
     /// <summary>Finds the release and sends it to every DSP.</summary>

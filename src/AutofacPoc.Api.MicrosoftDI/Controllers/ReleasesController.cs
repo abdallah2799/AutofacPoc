@@ -20,19 +20,25 @@ public class ReleasesController : ControllerBase
     private readonly DistributeReleaseService _distributeReleaseService;
     private readonly DistributeToAllDspsService _distributeToAllDspsService;
     private readonly GetDeliveriesService _getDeliveriesService;
+    private readonly ScheduleDistributionService _scheduleDistributionService;
 
     /// <summary>Called by the DI container, which supplies the use cases.</summary>
     /// <param name="distributeReleaseService">Sends a release to one DSP.</param>
     /// <param name="distributeToAllDspsService">Sends a release to every DSP.</param>
     /// <param name="getDeliveriesService">Reads the delivery history.</param>
+    /// <param name="scheduleDistributionService">Queues a distribution for the background worker.</param>
+    // Note: DistributeToAllDspsService (and its 4 distributors) is built for EVERY request, even ones that
+    // never call distribute-all, because the built-in container has no Lazy<T>. See Phase 8 in the README.
     public ReleasesController(
         DistributeReleaseService distributeReleaseService,
         DistributeToAllDspsService distributeToAllDspsService,
-        GetDeliveriesService getDeliveriesService)
+        GetDeliveriesService getDeliveriesService,
+        ScheduleDistributionService scheduleDistributionService)
     {
         _distributeReleaseService = distributeReleaseService;
         _distributeToAllDspsService = distributeToAllDspsService;
         _getDeliveriesService = getDeliveriesService;
+        _scheduleDistributionService = scheduleDistributionService;
     }
 
     /// <summary>Distribute a release to one DSP, chosen in the URL.</summary>
@@ -86,6 +92,32 @@ public class ReleasesController : ControllerBase
             return NotFound($"Release {releaseId} not found");
 
         return Ok(results);
+    }
+
+    /// <summary>Schedule a distribution: answer now, deliver shortly in the background.</summary>
+    /// <remarks>
+    /// Returns **202 Accepted** straight away. A background worker delivers the release about a second later;
+    /// check `GET /releases/{releaseId}/deliveries` to see it.
+    ///
+    /// **Permission needed:** `X-Permissions: distribute` (checked now, while we know who the caller is).
+    /// </remarks>
+    /// <param name="releaseId">Unique number of the release, e.g. 1.</param>
+    /// <param name="dsp">Which DSP to deliver to.</param>
+    /// <response code="202">Queued; it will be delivered shortly.</response>
+    /// <response code="400">The DSP name is not one we support.</response>
+    /// <response code="403">The caller lacks the "distribute" permission.</response>
+    /// <response code="404">No release has this id.</response>
+    [HttpPost("{releaseId}/schedule/{dsp}")]
+    [ProducesResponseType(typeof(string), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(string), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(string), StatusCodes.Status404NotFound)]
+    public IActionResult Schedule(int releaseId, Dsp dsp)
+    {
+        if (!_scheduleDistributionService.Schedule(releaseId, dsp))
+            return NotFound($"Release {releaseId} not found");
+
+        return Accepted((string?)null, $"Release {releaseId} scheduled for {dsp}");
     }
 
     /// <summary>See where a release has been delivered.</summary>

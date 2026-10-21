@@ -23,12 +23,14 @@ src/
 ├── AutofacPoc.Api.MicrosoftDI  Web API using the BUILT-IN container      → http://localhost:5001
 │   ├── Registrations/          AddApplication(), AddInfrastructure() extension methods
 │   ├── Distribution/           Picks a DSP's distributor by key (built-in keyed services)
-│   └── Security/               Reads the user's permissions from the X-Permissions header
+│   ├── Security/               Reads the user's permissions from the X-Permissions header
+│   └── Workers/                Background worker for scheduled distributions (scope + GetRequiredService)
 └── AutofacPoc.Api.Autofac      The SAME Web API using AUTOFAC            → http://localhost:5002
     ├── Modules/                ApplicationModule, InfrastructureModule
     ├── Distribution/           Picks a DSP's distributor by key (Autofac IIndex)
     ├── Interceptors/           LoggingInterceptor, SecurityInterceptor
-    └── Security/               Reads the user's permissions from the X-Permissions header
+    ├── Security/               Reads the user's permissions from the X-Permissions header
+    └── Workers/                Background worker for scheduled distributions (Func<Owned<T>>)
 ```
 
 Domain, Application and Infrastructure are **shared** and never mention a DI container.
@@ -48,6 +50,7 @@ What each phase showed, for an ASP.NET Core app like ours:
 | Decorators (Phase 5) | Hand-built factories, or Scrutor | `RegisterDecorator` | Autofac |
 | Interceptors: logging/security on many services (Phase 6) | ❌ One decorator per interface | Built in (DynamicProxy) | **Autofac, clearly** |
 | Property injection for base classes and optional services (Phase 7) | ❌ Set by hand, or constructors through every subclass | `.PropertiesAutowired()` | Autofac, use deliberately |
+| Lazy creation, factories, owned units of work (Phase 8) | ❌ Service locator (`IServiceProvider`, `CreateScope()` + `GetRequiredService`) | `Lazy<T>`, `Func<T>`, `Owned<T>` as constructor parameters, nothing to register | Autofac |
 
 **In short:** for a small app, the built-in container is enough. Autofac pays off when you need many implementations
 chosen at runtime (like one distributor per DSP), conventions instead of long registration lists, cross-cutting
@@ -85,6 +88,7 @@ dotnet run --project src/AutofacPoc.Api.Autofac       # opens http://localhost:5
 |---|---|
 | `POST /releases/{releaseId}/distribute/{dsp}` | Sends the release to one DSP: `Spotify`, `Anghami`, `AppleMusic` or `YouTubeMusic`. |
 | `POST /releases/{releaseId}/distribute-all` | Sends the release to every DSP and returns one result each. |
+| `POST /releases/{releaseId}/schedule/{dsp}` | Answers **202** at once; a background worker delivers the release about a second later. |
 | `GET /releases/{releaseId}/deliveries` | Lists where the release has been delivered (recorded on every successful delivery). |
 
 Releases `1` and `2` exist; `99` returns 404. An unknown DSP (e.g. `TikTok`) returns 400.
@@ -115,6 +119,7 @@ The code is documented with `///` comments; they also show up as tooltips in you
 | 5 | **Decorators**: a logging wrapper around `IDspDistributor` | ✅ Done |
 | 6 | **Interceptors (AOP)**: one logging and one security interceptor for many services | ✅ Done |
 | 7 | **Property injection**: shared and optional services for every DSP distributor's base class | ✅ Done |
+| 8 | **Relationship types** (`Lazy<T>`, `Func<T>`, `Owned<T>`): replacing the service-locator pattern | ✅ Done |
 
 ### Phase 0: Setup
 
@@ -636,3 +641,104 @@ code too, and anything created outside it would silently get no properties.
 - **Controllers:** ASP.NET Core doesn't create controllers through the container by default, so property injection
   doesn't reach them unless you add `AddControllers().AddControllersAsServices()` plus `.PropertiesAutowired()` on the
   controller registrations.
+
+### Phase 8: Relationship types (`Lazy<T>`, `Func<T>`, `Owned<T>`)
+
+**The pattern this replaces: service locator.** Instead of declaring what it needs in its constructor, a class *asks
+the container* while it runs:
+
+```csharp
+// Service locator: avoid this
+var erp = SomeStaticContainer.GetRequiredService<IErpService>();
+// or
+using var scope = scopeFactory.CreateScope();
+var service = scope.ServiceProvider.GetRequiredService<DistributeReleaseService>();
+```
+
+Problems: the constructor no longer tells you what the class depends on, a missing registration fails only when that
+line runs, and the class can't be unit-tested without a real container.
+
+Usually the fix is just **constructor injection**. But sometimes a plain constructor parameter isn't enough, which is
+why people reach for the container. Autofac's **relationship types** cover those cases while staying ordinary
+constructor parameters:
+
+| You need… | Ask for | You get |
+|---|---|---|
+| The object only if it's actually used | `Lazy<T>` | Created on first `.Value` |
+| New objects whenever you want | `Func<T>` | A factory; each call resolves `T` again (a new one, unless `T` is shared, e.g. scoped or singleton) |
+| An object with its own lifetime that you clean up | `Owned<T>` | `T` in its own small scope; disposing it disposes everything created for it |
+| A fresh, cleaned-up unit of work per job | `Func<Owned<T>>` | Both combined |
+
+**Nothing is registered for them.** Autofac builds `Lazy<T>`, `Func<T>` and `Owned<T>` automatically for any registered `T`.
+
+**Example 1: `Lazy<T>`: don't build what the request won't use.** `ReleasesController` needs
+`DistributeToAllDspsService` only for `distribute-all`, but building it also builds all 4 distributors. In the Autofac API:
+
+```csharp
+public ReleasesController(..., Lazy<DistributeToAllDspsService> distributeToAllDspsService, ...)
+
+var results = _distributeToAllDspsService.Value.DistributeToAll(releaseId);   // built here, on first use
+```
+
+The service logs `[Created] DistributeToAllDspsService` when it is built. **Measured with 10 controller requests, only
+one of them distribute-all:** the built-in API built it **10 times**, the Autofac API **once**.
+
+**Example 2: `Func<Owned<T>>`: background jobs.** New endpoint `POST /releases/{id}/schedule/{dsp}` answers
+**202** at once and puts the job in a queue. A background worker (`Workers/ScheduledDistributionWorker.cs`) delivers it
+about a second later.
+
+The worker lives for the whole app, but each job needs `DistributeReleaseService` and its per-request services
+(distributor, current user...). Injecting `DistributeReleaseService` directly would keep one instance forever
+(a "captive dependency"). Each job needs a fresh set, cleaned up afterwards:
+
+```csharp
+// Autofac API: ask for a factory of owned instances
+public ScheduledDistributionWorker(IDistributionQueue queue,
+                                   Func<Owned<DistributeReleaseService>> createDistributeService, ...)
+
+using (Owned<DistributeReleaseService> owned = _createDistributeService())   // fresh unit of work
+{
+    owned.Value.Distribute(job.ReleaseId, job.Dsp);
+}                                                                            // everything it created is disposed
+```
+
+```csharp
+// Built-in DI API: open a scope and ask the container (service locator)
+public ScheduledDistributionWorker(IDistributionQueue queue, IServiceScopeFactory scopeFactory, ...)
+
+using (var scope = _scopeFactory.CreateScope())
+{
+    var service = scope.ServiceProvider.GetRequiredService<DistributeReleaseService>();
+    service.Distribute(job.ReleaseId, job.Dsp);
+}
+```
+
+Both work, but only the Autofac constructor tells the truth about what the worker needs, and it is easy to unit-test
+(pass a fake `Func<Owned<...>>`); the built-in version needs a fake scope factory, scope and service provider.
+
+**Who is the user in the background?** A background job has no HTTP request, so there is no `X-Permissions` header.
+The permission is checked **when scheduling** (`ScheduleDistributionService`), while the caller is known. The job then
+runs as the system (`HeaderCurrentUser` allows work that has no request). A real app would store who scheduled the job
+and run it as that user.
+
+**See it work:** schedule release 2 to YouTube Music, call `GET /releases/2/deliveries` right away (empty), then
+again a second later (`YouTube Music`). The console shows:
+
+```
+[Worker] Scheduled distribution done: release 2 -> Delivered to YouTube Music
+```
+
+**Comparison:**
+
+| | Built-in DI | Autofac |
+|---|---|---|
+| Create only when used | ❌ No `Lazy<T>` (register your own, or inject `IServiceProvider`) | ✅ `Lazy<T>` |
+| Create new instances on demand | Factory delegate registered by hand, or `IServiceProvider` | ✅ `Func<T>` (also `Func<X, T>` to pass parameters) |
+| Fresh unit of work per job | `IServiceScopeFactory` + `GetRequiredService` (service locator) | ✅ `Func<Owned<T>>` |
+| Registration needed | Yes, for any of the above | None |
+
+**Rules:**
+- Prefer plain constructor injection. Use these only when "now, once" isn't what you need.
+- Always dispose an `Owned<T>` (`using`), or what it created lives until the app stops.
+- `Lazy<T>`, `Func<T>` and `Owned<T>` live in the API project here. `Lazy<T>` and `Func<T>` are plain .NET types and could
+  be used in any layer; `Owned<T>` is an Autofac type, so keep it out of Domain and Application.
